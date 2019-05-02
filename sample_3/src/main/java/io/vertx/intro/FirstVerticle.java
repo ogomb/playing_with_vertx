@@ -5,10 +5,17 @@ import io.vertx.config.ConfigRetriever;
 import io.vertx.core.AbstractVerticle;
 import io.vertx.core.Future;
 import io.vertx.core.http.HttpServerResponse;
+import io.vertx.core.json.Json;
 import io.vertx.ext.web.Router;
+import io.vertx.ext.web.RoutingContext;
 import io.vertx.ext.web.handler.StaticHandler;
 
+import java.util.LinkedHashMap;
+import java.util.Map;
+
 public class FirstVerticle extends AbstractVerticle {
+
+    private Map readingList = new LinkedHashMap();
 
     /*
     When packaging the app and running it do this
@@ -23,6 +30,8 @@ public class FirstVerticle extends AbstractVerticle {
      */
     @Override
     public void start(Future future) throws Exception {
+
+        createSomeData();
         Router router = Router.router(vertx);
 
         router.route("/").handler(rc -> {
@@ -31,6 +40,8 @@ public class FirstVerticle extends AbstractVerticle {
                     .putHeader("content-type", "text/html")
                     .end("</pre> <h1> Hi vert.x application</h1>");
         });
+
+        router.get("/api/articles").handler(this::getAll);
 
         router.route("/assets/*")
                 .handler(StaticHandler.create("assets"));
@@ -53,6 +64,24 @@ public class FirstVerticle extends AbstractVerticle {
                                         });
                     }
                 });
+    }
+
+    private void createSomeData() {
+        Article article1 = new Article(
+                "Fallacies of distributed computing",
+                "https://en.wikipedia.org/wiki/Fallacies_of_distributed_computing");
+        readingList.put(article1.getId(), article1);
+        Article article2 = new Article(
+                "Reactive Manifesto",
+                "https://www.reactivemanifesto.org/");
+        readingList.put(article2.getId(), article2);
+    }
+
+    private void getAll(RoutingContext rc) {
+        rc.response()
+                .putHeader("content-type",
+                        "application/json; charset=utf-8")
+                .end(Json.encodePrettily(readingList.values()));
     }
 }
 

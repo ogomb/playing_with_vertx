@@ -35,7 +35,7 @@ public class Article {
     public String getUrl() {
         return url;
     }
-    
+
     public Article setUrl(String url) {
         this.url = url;
         return this;
