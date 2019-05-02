@@ -4,6 +4,8 @@ package io.vertx.intro;
 import io.vertx.config.ConfigRetriever;
 import io.vertx.core.AbstractVerticle;
 import io.vertx.core.Future;
+import io.vertx.core.http.HttpServerResponse;
+import io.vertx.ext.web.Router;
 
 public class FirstVerticle extends AbstractVerticle {
 
@@ -20,25 +22,33 @@ public class FirstVerticle extends AbstractVerticle {
      */
     @Override
     public void start(Future future) throws Exception {
-        ConfigRetriever retriever = ConfigRetriever.create(vertx);
-        retriever.getConfig(config -> {
-            if (config.failed()) {
-                future.fail(config.cause());
-            } else {
-                vertx.createHttpServer()
-                        .requestHandler(r ->
-                                r.response().end("<h1>Hi, Vert.x application</h1>"))
-                        .listen(config.result().getInteger("HTTP_PORT", 8080),
-                                result -> {
-                                    if (result.succeeded()) {
-                                        future.complete();
-                                    } else {
-                                        future.fail(result.cause());
-                                    }
-                                });
+        Router router = Router.router(vertx);
 
-            }
+        router.route("/").handler(rc -> {
+            HttpServerResponse response = rc.response();
+            response
+                    .putHeader("content-type", "text/html")
+                    .end("</pre> <h1> Hi vert.x application</h1>");
         });
+
+        ConfigRetriever retriever = ConfigRetriever.create(vertx);
+        retriever.getConfig(
+                config -> {
+                    if (config.failed()) {
+                        future.fail(config.cause());
+                    } else {
+                        vertx.createHttpServer()
+                                .requestHandler(router::accept)
+                                .listen(config().getInteger("HTTP_PORT", 8080),
+                                        result -> {
+                                            if (result.succeeded()) {
+                                                future.complete();
+                                            } else {
+                                                future.fail(result.cause());
+                                            }
+                                        });
+                    }
+                });
     }
 }
 
