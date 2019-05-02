@@ -1,10 +1,10 @@
 package io.vertx.intro;
 
+import io.vertx.config.ConfigRetriever;
 import io.vertx.core.AbstractVerticle;
 import io.vertx.core.Future;
 
 public class FirstVerticle extends AbstractVerticle {
-
 
     /*
     When packaging the app and running it do this
@@ -17,18 +17,27 @@ public class FirstVerticle extends AbstractVerticle {
     vertx-config to the rescue
 
      */
-
     @Override
     public void start(Future future) throws Exception {
-        vertx.createHttpServer()
-                .requestHandler(r -> r.response().end("<h1> Hi vert.x application"))
-                .listen(config().getInteger("HTTP_PORT", 8080),
-                        result -> {
-                    if (result.succeeded()){
-                        future.complete();
-                    }else {
-                        future.fail(result.cause());
+        ConfigRetriever retriever = ConfigRetriever.create(vertx);
+        retriever.getConfig(config -> {
+                    if (config.failed()) {
+                        future.fail(config.cause());
+                    } else {
+                        vertx.createHttpServer()
+                                .requestHandler(r ->
+                                        r.response().end("<h1>Hi, Vert.x application</h1>"))
+                                .listen(config.result().getInteger("HTTP_PORT", 8080),
+                                        result -> {
+                                            if (result.succeeded()) {
+                                                future.complete();
+                                            } else {
+                                                future.fail(result.cause());
+                                            }
+                                        });
+
                     }
                 });
     }
 }
+
