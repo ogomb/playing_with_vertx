@@ -6,6 +6,7 @@ import io.vertx.core.AbstractVerticle;
 import io.vertx.core.Future;
 import io.vertx.core.http.HttpServerResponse;
 import io.vertx.ext.web.Router;
+import io.vertx.ext.web.handler.StaticHandler;
 
 public class FirstVerticle extends AbstractVerticle {
 
@@ -30,6 +31,9 @@ public class FirstVerticle extends AbstractVerticle {
                     .putHeader("content-type", "text/html")
                     .end("</pre> <h1> Hi vert.x application</h1>");
         });
+
+        router.route("/assets/*")
+                .handler(StaticHandler.create("assets"));
 
         ConfigRetriever retriever = ConfigRetriever.create(vertx);
         retriever.getConfig(
