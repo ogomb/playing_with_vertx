@@ -15,8 +15,10 @@ public class Article {
         this.url = url;
     }
 
-    public Article() {
+    public Article(Long aLong, String title, String url) {
         this.id = COUNTER.getAndIncrement();
+        this.title = title;
+        this.url = url;
     }
 
     public int getId() {

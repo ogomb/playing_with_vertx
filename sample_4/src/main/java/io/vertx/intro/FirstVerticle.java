@@ -3,9 +3,11 @@ package io.vertx.intro;
 
 import io.vertx.config.ConfigRetriever;
 import io.vertx.core.AbstractVerticle;
+import io.vertx.core.CompositeFuture;
 import io.vertx.core.Future;
 import io.vertx.core.http.HttpServerResponse;
 import io.vertx.core.json.Json;
+import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.jdbc.JDBCClient;
 import io.vertx.ext.sql.SQLConnection;
@@ -35,7 +37,7 @@ public class FirstVerticle extends AbstractVerticle {
 
      */
     @Override
-    public void start(Future future) throws Exception {
+    public void start(Future fut) throws Exception {
 
         createSomeData();
         Router router = Router.router(vertx);
@@ -59,25 +61,37 @@ public class FirstVerticle extends AbstractVerticle {
         router.route("/assets/*").handler(StaticHandler.create("assets"));
 
         ConfigRetriever retriever = ConfigRetriever.create(vertx);
-        retriever.getConfig(
-                config -> {
-                    if (config.failed()) {
-                        future.fail(config.cause());
-                    } else {
+        ConfigRetriever.getConfigAsFuture(retriever)
+                .compose(config -> {
+                    jdbc = JDBCClient.createShared(vertx, config, "read-list");
 
-                        jdbc = JDBCClient.createShared(vertx, config.result(),"read_list");
-                        vertx.createHttpServer()
-                                .requestHandler(router::accept)
-                                .listen(config().getInteger("HTTP_PORT", 8080),
-                                        result -> {
-                                            if (result.succeeded()) {
-                                                future.complete();
-                                            } else {
-                                                future.fail(result.cause());
-                                            }
+                    return connect()
+                            .compose(connection -> {
+                                Future<Void> future = Future.future();
+                                createTableIfNeeded(connection)
+                                        .compose(this::createSomeDataIfNone)
+                                        .setHandler(x -> {
+                                            connection.close();
+                                            future.handle(x.mapEmpty());
                                         });
-                    }
-                });
+                                return future;
+                            })
+                            .compose(v -> createHttpServer(config, router));
+
+                })
+                .setHandler(fut);
+    }
+
+    private Future<Void> createHttpServer(JsonObject config, Router router) {
+        Future<Void> future = Future.future();
+        vertx
+                .createHttpServer()
+                .requestHandler(router::accept)
+                .listen(
+                        config.getInteger("HTTP_PORT", 8080),
+                        res -> future.handle(res.mapEmpty())
+                );
+        return future;
     }
 
     private void createSomeData() {
@@ -196,5 +210,47 @@ public class FirstVerticle extends AbstractVerticle {
         return  future;
     }
 
+
+    private Future<SQLConnection> createSomeDataIfNone(SQLConnection connection) {
+        Future<SQLConnection> future = Future.future();
+        connection.query("SELECT * FROM Articles", select -> {
+            if (select.failed()) {
+                future.fail(select.cause());
+            } else {
+                if (select.result().getResults().isEmpty()) {
+                    Article article1 = new Article("Fallacies of distributed computing",
+                            "https://en.wikipedia.org/wiki/Fallacies_of_distributed_computing");
+                    Article article2 = new Article("Reactive Manifesto",
+                            "https://www.reactivemanifesto.org/");
+
+                    Future<Article> insertion1 = insert(connection, article1, false);
+
+                    Future<Article> insertion2 = insert(connection, article2, false);
+
+                    CompositeFuture.all(insertion1, insertion2).setHandler(r -> future.handle(r.map(connection)));
+                } else {
+                    future.complete(connection);
+                }
+            }
+        });
+        return future;
+    }
+    private Future<Article> insert(SQLConnection connection, Article article, boolean closeConnection) {
+        Future<Article> future = Future.future();
+
+        String sql = "INSERT INTO Articles (title, url) VALUES (?, ?)";
+        connection.updateWithParams(sql, new JsonArray().add(article.getTitle()).add(article.getUrl()),
+                ar -> {
+                    if (closeConnection) {
+                        connection.close();
+                    }
+                    future.handle(
+                            ar.map(res -> new Article(res.getKeys().getLong(0),
+                                    article.getTitle(), article.getUrl()))
+                    );
+                }
+        );
+        return future;
+    }
 }
 
