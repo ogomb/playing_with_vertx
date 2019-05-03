@@ -1,3 +1,7 @@
 {
-  "HTTP_PORT" : 8082
+  "HTTP_PORT" : 8082,
+  "url": "jdbc:postgresql://localhost:5432/read_list",
+  "driver_class": "org.postgresql.Driver",
+  "user": "postgres",
+  "password": ""
 }
