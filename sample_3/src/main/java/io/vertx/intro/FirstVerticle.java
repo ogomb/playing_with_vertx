@@ -8,6 +8,7 @@ import io.vertx.core.http.HttpServerResponse;
 import io.vertx.core.json.Json;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
+import io.vertx.ext.web.handler.BodyHandler;
 import io.vertx.ext.web.handler.StaticHandler;
 
 import java.util.LinkedHashMap;
@@ -42,6 +43,9 @@ public class FirstVerticle extends AbstractVerticle {
         });
 
         router.get("/api/articles").handler(this::getAll);
+
+        router.route("/api/articles").handler(BodyHandler.create());
+        router.post("/api/articles").handler(this::addOne);
 
         router.route("/assets/*")
                 .handler(StaticHandler.create("assets"));
@@ -82,6 +86,15 @@ public class FirstVerticle extends AbstractVerticle {
                 .putHeader("content-type",
                         "application/json; charset=utf-8")
                 .end(Json.encodePrettily(readingList.values()));
+    }
+
+    private void addOne(RoutingContext rc){
+        Article article = rc.getBodyAsJson().mapTo(Article.class);
+        readingList.put(article.getId(), article);
+        rc.response()
+                .setStatusCode(201)
+                .putHeader("content-type", "application/json; charset=utf-8")
+                .end(Json.encodePrettily(article));
     }
 }
 
