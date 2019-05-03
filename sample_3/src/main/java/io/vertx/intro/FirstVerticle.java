@@ -49,6 +49,7 @@ public class FirstVerticle extends AbstractVerticle {
         router.post("/api/articles").handler(this::addOne);
 
         router.delete("/api/articles/:id").handler(this::deleteOne);
+        router.get("/api/articles/:id").handler(this::getOne);
 
         router.route("/assets/*")
                 .handler(StaticHandler.create("assets"));
@@ -110,5 +111,24 @@ public class FirstVerticle extends AbstractVerticle {
             rc.response().setStatusCode(400).end();
         }
     }
+
+    private void getOne(RoutingContext routingContext) {
+        String id = routingContext.request().getParam("id");
+        try {
+            Integer idAsInteger = Integer.valueOf(id);
+            Article article = (Article) readingList.get(idAsInteger);
+            if (article == null) {
+                routingContext.response().setStatusCode(404).end();
+            } else {
+                routingContext.response()
+                        .setStatusCode(200)
+                        .putHeader("content-type", "application/json; charset=utf-8")
+                        .end(Json.encodePrettily(article));
+            }
+        } catch (NumberFormatException e) {
+            routingContext.response().setStatusCode(400).end();
+        }
+    }
+
 }
 
