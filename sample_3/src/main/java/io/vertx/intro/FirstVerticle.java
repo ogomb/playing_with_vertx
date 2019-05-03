@@ -6,6 +6,7 @@ import io.vertx.core.AbstractVerticle;
 import io.vertx.core.Future;
 import io.vertx.core.http.HttpServerResponse;
 import io.vertx.core.json.Json;
+import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
 import io.vertx.ext.web.handler.BodyHandler;
@@ -42,17 +43,16 @@ public class FirstVerticle extends AbstractVerticle {
                     .end("</pre> <h1> Hi vert.x application</h1>");
         });
 
-        router.get("/api/articles").handler(this::getAll);
 
         //enable reading of the body for the post request
         router.route("/api/articles").handler(BodyHandler.create());
         router.post("/api/articles").handler(this::addOne);
 
+        router.get("/api/articles").handler(this::getAll);
         router.delete("/api/articles/:id").handler(this::deleteOne);
         router.get("/api/articles/:id").handler(this::getOne);
-
-        router.route("/assets/*")
-                .handler(StaticHandler.create("assets"));
+        router.put("/api/articles/:id").handler(this::updateOne);
+        router.route("/assets/*").handler(StaticHandler.create("assets"));
 
         ConfigRetriever retriever = ConfigRetriever.create(vertx);
         retriever.getConfig(
@@ -128,6 +128,28 @@ public class FirstVerticle extends AbstractVerticle {
         } catch (NumberFormatException e) {
             routingContext.response().setStatusCode(400).end();
         }
+    }
+
+    private void updateOne(RoutingContext routingContext) {
+        String id = routingContext.request().getParam("id");
+        try {
+            Integer idAsInteger = Integer.valueOf(id);
+            Article article = (Article) readingList.get(idAsInteger);
+            if (article == null) {
+                routingContext.response().setStatusCode(404).end();
+            } else {
+                JsonObject body = routingContext.getBodyAsJson();
+                article.setTitle(body.getString("title")).setUrl(body.getString("url"));
+                readingList.put(idAsInteger, article);
+                routingContext.response()
+                        .setStatusCode(200)
+                        .putHeader("content-type", "application/json; charset=utf-8")
+                        .end(Json.encodePrettily(article));
+            }
+        } catch (NumberFormatException e) {
+            routingContext.response().setStatusCode(400).end();
+        }
+
     }
 
 }
