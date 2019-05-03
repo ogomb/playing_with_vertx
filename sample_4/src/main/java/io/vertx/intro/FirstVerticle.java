@@ -181,5 +181,20 @@ public class FirstVerticle extends AbstractVerticle {
         return future;
     }
 
+
+    private Future<SQLConnection> createTableIfNeeded(SQLConnection connection){
+        Future<SQLConnection> future = Future.future();
+        vertx.fileSystem().readFile("tables.sql", ar -> {
+            if (ar.failed()){
+                future.fail(ar.cause());
+            } else {
+                connection.execute(ar.result().toString(),
+                        ar2 -> future.handle(ar2.map(connection))
+                );
+            }
+        });
+        return  future;
+    }
+
 }
 
