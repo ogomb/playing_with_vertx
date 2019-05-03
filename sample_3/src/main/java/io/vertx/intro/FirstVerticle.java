@@ -44,8 +44,11 @@ public class FirstVerticle extends AbstractVerticle {
 
         router.get("/api/articles").handler(this::getAll);
 
+        //enable reading of the body for the post request
         router.route("/api/articles").handler(BodyHandler.create());
         router.post("/api/articles").handler(this::addOne);
+
+        router.delete("/api/articles/:id").handler(this::deleteOne);
 
         router.route("/assets/*")
                 .handler(StaticHandler.create("assets"));
@@ -95,6 +98,17 @@ public class FirstVerticle extends AbstractVerticle {
                 .setStatusCode(201)
                 .putHeader("content-type", "application/json; charset=utf-8")
                 .end(Json.encodePrettily(article));
+    }
+
+    private void deleteOne(RoutingContext rc){
+        String id = rc.request().getParam("id");
+        try {
+            Integer idAsInteger = Integer.valueOf(id);
+            readingList.remove(idAsInteger);
+            rc.response().setStatusCode(204).end();
+        } catch (NumberFormatException e){
+            rc.response().setStatusCode(400).end();
+        }
     }
 }
 
