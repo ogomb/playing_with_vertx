@@ -12,13 +12,19 @@ import io.vertx.core.json.JsonObject;
 import io.vertx.ext.jdbc.JDBCClient;
 import io.vertx.ext.sql.SQLConnection;
 import io.vertx.ext.sql.SQLOptions;
+import io.vertx.ext.sql.UpdateResult;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
 import io.vertx.ext.web.handler.BodyHandler;
 import io.vertx.ext.web.handler.StaticHandler;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.NoSuchElementException;
+import java.util.stream.Collectors;
+
+import static io.vertx.intro.ActionHelper.*;
 
 public class FirstVerticle extends AbstractVerticle {
 
@@ -106,70 +112,37 @@ public class FirstVerticle extends AbstractVerticle {
     }
 
     private void getAll(RoutingContext rc) {
-        rc.response()
-                .putHeader("content-type",
-                        "application/json; charset=utf-8")
-                .end(Json.encodePrettily(readingList.values()));
+       connect()
+               .compose(this::query)
+               .setHandler(ok(rc));
     }
 
     private void addOne(RoutingContext rc){
         Article article = rc.getBodyAsJson().mapTo(Article.class);
-        readingList.put(article.getId(), article);
-        rc.response()
-                .setStatusCode(201)
-                .putHeader("content-type", "application/json; charset=utf-8")
-                .end(Json.encodePrettily(article));
+        connect()
+                .compose(connection -> insert(connection, article, true))
+                .setHandler(created(rc));
     }
 
     private void deleteOne(RoutingContext rc){
         String id = rc.request().getParam("id");
-        try {
-            Integer idAsInteger = Integer.valueOf(id);
-            readingList.remove(idAsInteger);
-            rc.response().setStatusCode(204).end();
-        } catch (NumberFormatException e){
-            rc.response().setStatusCode(400).end();
-        }
+        connect()
+                .compose(connection -> delete(connection, id))
+                .setHandler(noContent(rc));
     }
 
-    private void getOne(RoutingContext routingContext) {
-        String id = routingContext.request().getParam("id");
-        try {
-            Integer idAsInteger = Integer.valueOf(id);
-            Article article = (Article) readingList.get(idAsInteger);
-            if (article == null) {
-                routingContext.response().setStatusCode(404).end();
-            } else {
-                routingContext.response()
-                        .setStatusCode(200)
-                        .putHeader("content-type", "application/json; charset=utf-8")
-                        .end(Json.encodePrettily(article));
-            }
-        } catch (NumberFormatException e) {
-            routingContext.response().setStatusCode(400).end();
-        }
+    private void getOne(RoutingContext rc) {
+        String id = rc.pathParam("id");
+        connect()
+                .compose(connection -> queryOne(connection, id))
+                .setHandler(ok(rc));
     }
-
-    private void updateOne(RoutingContext routingContext) {
-        String id = routingContext.request().getParam("id");
-        try {
-            Integer idAsInteger = Integer.valueOf(id);
-            Article article = (Article) readingList.get(idAsInteger);
-            if (article == null) {
-                routingContext.response().setStatusCode(404).end();
-            } else {
-                JsonObject body = routingContext.getBodyAsJson();
-                article.setTitle(body.getString("title")).setUrl(body.getString("url"));
-                readingList.put(idAsInteger, article);
-                routingContext.response()
-                        .setStatusCode(200)
-                        .putHeader("content-type", "application/json; charset=utf-8")
-                        .end(Json.encodePrettily(article));
-            }
-        } catch (NumberFormatException e) {
-            routingContext.response().setStatusCode(400).end();
-        }
-
+    private void updateOne(RoutingContext rc) {
+        String id = rc.request().getParam("id");
+        Article article = rc.getBodyAsJson().mapTo(Article.class);
+        connect()
+                .compose(connection ->  update(connection, id, article))
+                .setHandler(noContent(rc));
     }
 
     private Future<SQLConnection> connect(){
@@ -250,6 +223,91 @@ public class FirstVerticle extends AbstractVerticle {
                     );
                 }
         );
+        return future;
+    }
+
+
+    private Future<List<Article>> query(SQLConnection connection) {
+        Future<List<Article>> future = Future.future();
+        connection.query("SELECT * FROM articles", result -> {
+            //close the connection inorder for it to be reused
+                    connection.close();
+                    future.handle(result.map(rs ->
+                                    rs.getRows().stream()
+                                            .map(Article::new)
+                                            .collect(Collectors.toList()))
+                    );
+                }
+        );
+        return future;
+    }
+
+
+    private Future<Article> queryOne(SQLConnection connection, String id) {
+        Future<Article> future = Future.future();
+        String sql = "SELECT * FROM articles WHERE id = ?";
+        connection.queryWithParams(sql,
+                new JsonArray().add(Integer.valueOf(id)),
+                result -> {
+                    connection.close();
+                    future.handle(result.map(rs -> {
+                                List<JsonObject> rows = rs.getRows();
+                                if (rows.size() == 0) {
+                                    throw new NoSuchElementException(
+                                            "No article with id " + id);
+                                } else {
+                                    JsonObject row = rows.get(0);
+                                    return new Article(row);
+                                }
+                            })
+                    );
+                });
+        return future;
+    }
+
+    private Future<Void> update(SQLConnection connection, String id, Article article) {
+        Future<Void> future = Future.future();
+        String sql = "UPDATE articles SET title = ?, url = ? WHERE id = ?";
+        connection.updateWithParams(sql,
+                new JsonArray().add(article.getTitle())
+                        .add(article.getUrl())
+                        .add(Integer.valueOf(id)
+                        ), ar -> {
+                    connection.close();
+                    if (ar.failed()) {
+                        future.fail(ar.cause());
+                    } else {
+                        UpdateResult ur = ar.result();
+                        if (ur.getUpdated() == 0) {
+                            future.fail(new NoSuchElementException(
+                                    "No article with id " + id));
+                        } else {
+                            future.complete();
+                        }
+                    }
+                });
+        return future;
+    }
+
+    private Future<Void> delete(SQLConnection connection, String id) {
+        Future future = Future.future();
+        String sql = "DELETE FROM Articles WHERE id = ?";
+        connection.updateWithParams(sql,
+                new JsonArray().add(Integer.valueOf(id)),
+                ar -> {
+                    connection.close();
+                    if (ar.failed()) {
+                        future.fail(ar.cause());
+                    } else {
+                        if (ar.result().getUpdated() == 0) {
+                            future.fail(
+                                    new NoSuchElementException(
+                                            "No article with id " + id));
+                        } else {
+                            future.complete();
+                        }
+                    }
+                });
         return future;
     }
 }

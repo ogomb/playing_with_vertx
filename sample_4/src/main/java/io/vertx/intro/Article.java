@@ -1,27 +1,39 @@
 package io.vertx.intro;
 
+import io.vertx.core.json.JsonObject;
+
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class Article {
 
-    private static final AtomicInteger COUNTER = new AtomicInteger();
-    private final int id;
+    private long id = -1;
     private String title;
     private String url;
 
     public Article(String title, String url) {
-        this.id = COUNTER.getAndIncrement();
         this.title = title;
         this.url = url;
     }
 
-    public Article(Long aLong, String title, String url) {
-        this.id = COUNTER.getAndIncrement();
+    public Article(long id, String title, String url) {
+        this.id = id;
         this.title = title;
         this.url = url;
     }
 
-    public int getId() {
+    public Article() {
+
+    }
+
+    public Article(JsonObject json) {
+        this(
+                json.getInteger("id", -1),
+                json.getString("title"),
+                json.getString("url")
+        );
+    }
+
+    public long getId() {
         return id;
     }
 
