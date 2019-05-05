@@ -1,34 +1,33 @@
 package io.vertx.intro;
 
 
-import io.vertx.config.ConfigRetriever;
-import io.vertx.core.AbstractVerticle;
-import io.vertx.core.CompositeFuture;
+import io.reactivex.Completable;
+import io.reactivex.Single;
 import io.vertx.core.Future;
-import io.vertx.core.http.HttpServerResponse;
-import io.vertx.core.json.Json;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
-import io.vertx.ext.jdbc.JDBCClient;
-import io.vertx.ext.sql.SQLConnection;
 import io.vertx.ext.sql.SQLOptions;
-import io.vertx.ext.sql.UpdateResult;
-import io.vertx.ext.web.Router;
-import io.vertx.ext.web.RoutingContext;
-import io.vertx.ext.web.handler.BodyHandler;
-import io.vertx.ext.web.handler.StaticHandler;
+import io.vertx.reactivex.CompletableHelper;
+import io.vertx.reactivex.config.ConfigRetriever;
+import io.vertx.reactivex.core.AbstractVerticle;
+import io.vertx.reactivex.core.buffer.Buffer;
+import io.vertx.reactivex.core.http.HttpServerResponse;
+import io.vertx.reactivex.ext.jdbc.JDBCClient;
+import io.vertx.reactivex.ext.sql.SQLConnection;
+import io.vertx.reactivex.ext.web.Router;
+import io.vertx.reactivex.ext.web.RoutingContext;
+import io.vertx.reactivex.ext.web.handler.BodyHandler;
+import io.vertx.reactivex.ext.web.handler.StaticHandler;
 
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.stream.Collectors;
 
 import static io.vertx.intro.ActionHelper.*;
 
+
 public class FirstVerticle extends AbstractVerticle {
 
-    private Map readingList = new LinkedHashMap();
     JDBCClient jdbc;
 
     /*
@@ -44,8 +43,6 @@ public class FirstVerticle extends AbstractVerticle {
      */
     @Override
     public void start(Future fut) throws Exception {
-
-        createSomeData();
         Router router = Router.router(vertx);
 
         router.route("/").handler(rc -> {
@@ -67,248 +64,162 @@ public class FirstVerticle extends AbstractVerticle {
         router.route("/assets/*").handler(StaticHandler.create("assets"));
 
         ConfigRetriever retriever = ConfigRetriever.create(vertx);
-        ConfigRetriever.getConfigAsFuture(retriever)
-                .compose(config -> {
-                    jdbc = JDBCClient.createShared(vertx, config, "read-list");
-
-                    return connect()
-                            .compose(connection -> {
-                                Future<Void> future = Future.future();
-                                createTableIfNeeded(connection)
-                                        .compose(this::createSomeDataIfNone)
-                                        .setHandler(x -> {
-                                            connection.close();
-                                            future.handle(x.mapEmpty());
-                                        });
-                                return future;
-                            })
-                            .compose(v -> createHttpServer(config, router));
-
-                })
-                .setHandler(fut);
+        retriever.rxGetConfig()
+                .doOnSuccess(config ->
+                        jdbc = JDBCClient.createShared(vertx, config, "read-List"))
+                .flatMap(config ->
+                        connect()
+                                .flatMap(connection ->
+                                        this.createTableIfNeeded((SQLConnection) connection)
+                                                .flatMap(c-> createSomeDataIfNone((SQLConnection) c))
+                                                .doAfterTerminate(((SQLConnection) connection)::close)
+                                )
+                                .map(x -> config)
+                )
+                .flatMapCompletable(c -> createHttpServer((JsonObject) c, router))
+                .subscribe(CompletableHelper.toObserver(fut));
     }
 
-    private Future<Void> createHttpServer(JsonObject config, Router router) {
-        Future<Void> future = Future.future();
-        vertx
+
+    private Completable createHttpServer(JsonObject config, Router router) {
+        return vertx
                 .createHttpServer()
                 .requestHandler(router::accept)
-                .listen(
-                        config.getInteger("HTTP_PORT", 8080),
-                        res -> future.handle(res.mapEmpty())
-                );
-        return future;
+                .rxListen(config.getInteger("HTTP_PORT", 8080))
+                .toCompletable();
     }
 
-    private void createSomeData() {
-        Article article1 = new Article(
-                "Fallacies of distributed computing",
-                "https://en.wikipedia.org/wiki/Fallacies_of_distributed_computing");
-        readingList.put(article1.getId(), article1);
-        Article article2 = new Article(
-                "Reactive Manifesto",
-                "https://www.reactivemanifesto.org/");
-        readingList.put(article2.getId(), article2);
-    }
+
 
     private void getAll(RoutingContext rc) {
-       connect()
-               .compose(this::query)
-               .setHandler(ok(rc));
+        connect()
+                .flatMap(c-> query((SQLConnection) c))
+                .subscribe(ok(rc));
     }
 
-    private void addOne(RoutingContext rc){
+
+
+    private void addOne(RoutingContext rc) {
         Article article = rc.getBodyAsJson().mapTo(Article.class);
         connect()
-                .compose(connection -> insert(connection, article, true))
-                .setHandler(created(rc));
+                .flatMap(c -> insert((SQLConnection) c, article, true))
+                .subscribe(created(rc));
+    }
+    private void deleteOne(RoutingContext rc) {
+        String id = rc.pathParam("id");
+        connect()
+                .flatMapCompletable(c -> delete((SQLConnection) c, id))
+                .subscribe(noContent(rc), onError(rc));
     }
 
-    private void deleteOne(RoutingContext rc){
-        String id = rc.request().getParam("id");
-        connect()
-                .compose(connection -> delete(connection, id))
-                .setHandler(noContent(rc));
-    }
 
     private void getOne(RoutingContext rc) {
         String id = rc.pathParam("id");
         connect()
-                .compose(connection -> queryOne(connection, id))
-                .setHandler(ok(rc));
+                .flatMap(connection -> queryOne((SQLConnection) connection, id))
+                .subscribe(ok(rc));
     }
+
     private void updateOne(RoutingContext rc) {
         String id = rc.request().getParam("id");
-        Article article = rc.getBodyAsJson().mapTo(Article.class);
+        Article article = rc.getBodyAsJson()
+                .mapTo(Article.class);
         connect()
-                .compose(connection ->  update(connection, id, article))
-                .setHandler(noContent(rc));
+                .flatMapCompletable(c -> update((SQLConnection) c, id, article))
+                .subscribe(noContent(rc), onError(rc));
     }
 
-    private Future<SQLConnection> connect(){
-        Future<SQLConnection> future = Future.future();
-        jdbc.getConnection(ar ->
-                /*
+    private Single connect() {
+        return jdbc.rxGetConnection()
+                .map(c -> c.setOptions(
+                        new SQLOptions().setAutoGeneratedKeys(true)));
+    }
 
-                    if (ar.failed()) {
-                      future.failed(ar.cause());
+    private Single createTableIfNeeded(SQLConnection connection) {
+        return vertx.fileSystem().rxReadFile("tables.sql")
+                .map(Buffer::toString)
+                .flatMapCompletable(connection::rxExecute)
+                .toSingleDefault(connection);
+    }
+
+
+    private Single createSomeDataIfNone(SQLConnection c) {
+        return c.rxQuery("SELECT * FROM Articles")
+                .flatMap(rs -> {
+                    if (rs.getResults().isEmpty()) {
+                        Article article1 = new Article("Fallacies of distributed computing",
+                                "https://en.wikipedia.org/wiki/Fallacies_of_distributed_computing");
+                        Article article2 = new Article("Reactive Manifesto",
+                                "https://www.reactivemanifesto.org/");
+                        return Single.zip(
+                                insert(c, article1, false),
+                                insert(c, article2, false),
+                                (a1, a2) -> c);
                     } else {
-                      future.complete(ar.result());
+                        return Single.just(c);
                     }
-
-
-                    future.handle(ar.map(...
-                    is the shortcut for the above code. Just shorter.... cool
-                 */
-                future.handle(ar.map(connection ->
-                        connection.setOptions(
-                                new SQLOptions().setAutoGeneratedKeys(true))
-                ))
-        );
-        return future;
+                });
     }
 
-
-    private Future<SQLConnection> createTableIfNeeded(SQLConnection connection){
-        Future<SQLConnection> future = Future.future();
-        vertx.fileSystem().readFile("tables.sql", ar -> {
-            if (ar.failed()){
-                future.fail(ar.cause());
-            } else {
-                connection.execute(ar.result().toString(),
-                        ar2 -> future.handle(ar2.map(connection))
-                );
-            }
-        });
-        return  future;
-    }
-
-
-    private Future<SQLConnection> createSomeDataIfNone(SQLConnection connection) {
-        Future<SQLConnection> future = Future.future();
-        connection.query("SELECT * FROM Articles", select -> {
-            if (select.failed()) {
-                future.fail(select.cause());
-            } else {
-                if (select.result().getResults().isEmpty()) {
-                    Article article1 = new Article("Fallacies of distributed computing",
-                            "https://en.wikipedia.org/wiki/Fallacies_of_distributed_computing");
-                    Article article2 = new Article("Reactive Manifesto",
-                            "https://www.reactivemanifesto.org/");
-
-                    Future<Article> insertion1 = insert(connection, article1, false);
-
-                    Future<Article> insertion2 = insert(connection, article2, false);
-
-                    CompositeFuture.all(insertion1, insertion2).setHandler(r -> future.handle(r.map(connection)));
-                } else {
-                    future.complete(connection);
-                }
-            }
-        });
-        return future;
-    }
-    private Future<Article> insert(SQLConnection connection, Article article, boolean closeConnection) {
-        Future<Article> future = Future.future();
-
+    private Single<Article> insert(SQLConnection connection, Article article, boolean closeConnection) {
         String sql = "INSERT INTO Articles (title, url) VALUES (?, ?)";
-        connection.updateWithParams(sql, new JsonArray().add(article.getTitle()).add(article.getUrl()),
-                ar -> {
+        return connection.rxUpdateWithParams(sql, new JsonArray().add(article.getTitle()).add(article.getUrl()))
+                .map(res -> new Article(res.getKeys().getLong(0), article.getTitle(), article.getUrl()))
+                .doFinally(() -> {
                     if (closeConnection) {
                         connection.close();
                     }
-                    future.handle(
-                            ar.map(res -> new Article(res.getKeys().getLong(0),
-                                    article.getTitle(), article.getUrl()))
-                    );
-                }
-        );
-        return future;
+                });
     }
 
 
-    private Future<List<Article>> query(SQLConnection connection) {
-        Future<List<Article>> future = Future.future();
-        connection.query("SELECT * FROM articles", result -> {
-            //close the connection inorder for it to be reused
-                    connection.close();
-                    future.handle(result.map(rs ->
-                                    rs.getRows().stream()
-                                            .map(Article::new)
-                                            .collect(Collectors.toList()))
-                    );
-                }
-        );
-        return future;
+    private Single<List<Article>> query(SQLConnection connection) {
+        return connection.rxQuery("SELECT * FROM articles")
+                .map(rs -> rs.getRows().stream()
+                .map(Article::new)
+                .collect(Collectors.toList())
+    )
+    .doFinally(connection::close);
     }
 
 
-    private Future<Article> queryOne(SQLConnection connection, String id) {
-        Future<Article> future = Future.future();
+    private Single<Article> queryOne(SQLConnection connection, String id) {
         String sql = "SELECT * FROM articles WHERE id = ?";
-        connection.queryWithParams(sql,
-                new JsonArray().add(Integer.valueOf(id)),
-                result -> {
-                    connection.close();
-                    future.handle(result.map(rs -> {
-                                List<JsonObject> rows = rs.getRows();
-                                if (rows.size() == 0) {
-                                    throw new NoSuchElementException(
-                                            "No article with id " + id);
-                                } else {
-                                    JsonObject row = rows.get(0);
-                                    return new Article(row);
-                                }
-                            })
-                    );
+        return connection.rxQueryWithParams(sql, new JsonArray().add(Integer.valueOf(id)))
+                .doFinally(connection::close)
+                .map(rs -> {
+                    List rows = rs.getRows();
+                    if (rows.size() == 0) {
+                        throw new NoSuchElementException("No article with id " + id);
+                    } else {
+                        JsonObject row = (JsonObject) rows.get(0);
+                        return new Article(row);
+                    }
                 });
-        return future;
     }
 
-    private Future<Void> update(SQLConnection connection, String id, Article article) {
-        Future<Void> future = Future.future();
+    private Completable update(SQLConnection connection, String id, Article article) {
         String sql = "UPDATE articles SET title = ?, url = ? WHERE id = ?";
-        connection.updateWithParams(sql,
-                new JsonArray().add(article.getTitle())
-                        .add(article.getUrl())
-                        .add(Integer.valueOf(id)
-                        ), ar -> {
-                    connection.close();
-                    if (ar.failed()) {
-                        future.fail(ar.cause());
-                    } else {
-                        UpdateResult ur = ar.result();
-                        if (ur.getUpdated() == 0) {
-                            future.fail(new NoSuchElementException(
-                                    "No article with id " + id));
-                        } else {
-                            future.complete();
-                        }
-                    }
-                });
-        return future;
+        JsonArray params = new JsonArray().add(article.getTitle())
+                .add(article.getUrl())
+                .add(Integer.valueOf(id));
+        return connection.rxUpdateWithParams(sql, params)
+                .flatMapCompletable(ur ->
+                        ur.getUpdated() == 0 ?
+                                Completable.error(new NoSuchElementException("No article with id " + id)) :
+                                Completable.complete())
+                .doFinally(connection::close);
     }
 
-    private Future<Void> delete(SQLConnection connection, String id) {
-        Future future = Future.future();
+    private Completable delete(SQLConnection connection, String id) {
         String sql = "DELETE FROM Articles WHERE id = ?";
-        connection.updateWithParams(sql,
-                new JsonArray().add(Integer.valueOf(id)),
-                ar -> {
-                    connection.close();
-                    if (ar.failed()) {
-                        future.fail(ar.cause());
-                    } else {
-                        if (ar.result().getUpdated() == 0) {
-                            future.fail(
-                                    new NoSuchElementException(
-                                            "No article with id " + id));
-                        } else {
-                            future.complete();
-                        }
-                    }
-                });
-        return future;
+        JsonArray params = new JsonArray().add(Integer.valueOf(id));
+        return connection.rxUpdateWithParams(sql, params)
+                .doFinally(connection::close)
+                .flatMapCompletable(ur -> ur.getUpdated() == 0 ?
+                                Completable.error(new NoSuchElementException("No article with id " + id)):
+                        Completable.complete()
+                );
     }
 }
 
